@@ -1,0 +1,57 @@
+#!/bin/bash
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
+TARGET_DIR="$HOME/Pictures/SD_Backups"
+DESTINATION="$TARGET_DIR/LEICA_DSC_Backup"
+LOG_FILE="$HOME/Library/Logs/sd_backup.log"
+
+# Immich API Parameters
+IMMICH_URL="https://photos.tacsze2.synology.me"
+IMMICH_KEY="wznZ4J2lDHbuUVBy3lVMX3ms9Sy3iOULvW0pgEcrLQ"
+
+echo "[$(date)] SD to Immich Daemon Started." >> "$LOG_FILE"
+
+while true; do
+ if [ -d "/Volumes/LEICA DSC" ]; then
+ TIMESTAMP=$(date "+%Y-%m-%d_%H-%M-%S")
+ echo "[$TIMESTAMP] Leica Detected!" >> "$LOG_FILE"
+ osascript -e 'beep 2'
+ 
+ # 1. Local Sync Engine
+ mkdir -p "$DESTINATION"
+ rsync -avu --ignore-existing "/Volumes/LEICA DSC/" "$DESTINATION/" >> "$LOG_FILE" 2>&1
+ 
+ if [ $? -eq 0 ]; then
+ echo "[$(date)] Local backup success. Initiating Immich upload..." >> "$LOG_FILE"
+ osascript -e "display notification \"Uploading new assets to Immich...\" with title \"SD Backup System\""
+ 
+ # 2. Immich CLI Upload Engine
+ # -a: Auto-archive mode, -c 5: Concurrency throttle, -r: Search folders recursively
+ echo "####command####" >> "$LOG_FILE"
+ echo "$HOME/bin/immich-go upload from-folder --server=$IMMICH_URL --api-key=$IMMICH_KEY $DESTINATION" >> "$LOG_FILE"
+ $HOME/bin/immich-go upload from-folder --no-ui --server=$IMMICH_URL --api-key=$IMMICH_KEY $DESTINATION >> "$LOG_FILE" 2>&1
+ 
+ if [ $? -eq 0 ]; then
+ echo "[$(date)] Immich Upload Complete!" >> "$LOG_FILE"
+ say "Leica ingestion completely finished. Safely removing the card."
+ osascript -e "display notification \"Immich Sync Complete! Safe to eject.\" with title \"SD Backup System\""
+ 
+ diskutil eject "/Volumes/LEICA DSC" >> "$LOG_FILE" 2>&1
+ else
+ echo "[$(date)] Immich CLI Upload Failed!" >> "$LOG_FILE"
+ say "Local copy succeeded, but Immich upload failed."
+ fi
+ else
+ echo "[$(date)] Local rsync failed!" >> "$LOG_FILE"
+ say "Alert. Local backup failed."
+ fi
+ 
+ # Debounce sleep to await card extraction
+ while [ -d "/Volumes/LEICA DSC" ]; do
+ sleep 2
+ done
+ fi
+ sleep 2
+done
